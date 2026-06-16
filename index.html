@@ -109,8 +109,12 @@ body{display:flex;flex-direction:column;height:100dvh}
 
 /* Type toggle */
 .type-row{display:flex;background:var(--surface2);border-radius:10px;padding:3px;margin-bottom:10px;gap:2px}
-.type-btn{flex:1;padding:8px 4px;background:transparent;border:none;border-radius:8px;color:var(--text-muted);font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:all .15s}
+.type-btn{flex:1;padding:8px 2px;background:transparent;border:none;border-radius:8px;color:var(--text-muted);font-size:11px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:all .15s}
 .type-btn.on{background:var(--accent);color:#fff}
+
+/* Cardio fields */
+#cardio-fields{display:none;margin-bottom:0}
+#cardio-fields .nums-row{margin-bottom:8px}
 
 /* Number inputs */
 .nums-row{display:grid;gap:8px;margin-bottom:10px}
@@ -230,10 +234,13 @@ body{display:flex;flex-direction:column;height:100dvh}
   <!-- Rest timer -->
   <div id="rest-bar">
     <div>
-      <div class="rest-label">Rest</div>
+      <div class="rest-label" id="rest-lbl">REST</div>
       <div id="rest-display">0:00</div>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="App.resetRest()">Reset</button>
+    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+      <button id="rest-stop-btn" class="btn btn-primary btn-sm" onclick="App.stopRest()" style="min-width:80px">⏹ STOP</button>
+      <button class="btn btn-ghost btn-sm" onclick="App.resetRest()" style="min-width:80px">↺ Reset</button>
+    </div>
   </div>
 
   <!-- Session exercise chips -->
@@ -270,6 +277,7 @@ body{display:flex;flex-direction:column;height:100dvh}
       <button class="type-btn on" data-t="weight" onclick="App.setType('weight',this)">Weight</button>
       <button class="type-btn" data-t="bodyweight" onclick="App.setType('bodyweight',this)">BW</button>
       <button class="type-btn" data-t="hold" onclick="App.setType('hold',this)">Hold</button>
+      <button class="type-btn" data-t="cardio" onclick="App.setType('cardio',this)">Cardio</button>
     </div>
     <div class="nums-row" id="nums-row" style="grid-template-columns:1fr 1fr 1fr">
       <div class="num-grp" id="grp-weight">
@@ -296,6 +304,33 @@ body{display:flex;flex-direction:column;height:100dvh}
       <div class="rir-c" data-v="3">3</div>
       <div class="rir-c" data-v="4">4</div>
       <div class="rir-c" data-v="5">5+</div>
+    </div>
+    <!-- Cardio fields (shown only when type=cardio) -->
+    <div id="cardio-fields">
+      <div class="nums-row" style="grid-template-columns:1fr 1fr;margin-bottom:8px">
+        <div class="num-grp">
+          <div class="num-lbl">Minutes</div>
+          <input type="number" id="inp-cdur" class="num-inp" placeholder="30" inputmode="decimal" step="1">
+        </div>
+        <div class="num-grp">
+          <div class="num-lbl">Speed mph</div>
+          <input type="number" id="inp-cspd" class="num-inp" placeholder="3.5" inputmode="decimal" step="0.1">
+        </div>
+      </div>
+      <div class="nums-row" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:10px">
+        <div class="num-grp">
+          <div class="num-lbl">Incline %</div>
+          <input type="number" id="inp-cgrade" class="num-inp" placeholder="0" inputmode="decimal" step="0.5">
+        </div>
+        <div class="num-grp">
+          <div class="num-lbl">Miles</div>
+          <input type="number" id="inp-cdist" class="num-inp" placeholder="—" inputmode="decimal" step="0.01">
+        </div>
+        <div class="num-grp">
+          <div class="num-lbl">Vest lbs</div>
+          <input type="number" id="inp-cvest" class="num-inp" placeholder="0" inputmode="decimal">
+        </div>
+      </div>
     </div>
     <textarea id="inp-note" class="inp" placeholder="Note (optional)..." style="font-size:14px;padding:10px 12px;resize:none;height:48px;margin-bottom:10px"></textarea>
     <div class="log-actions">
@@ -511,6 +546,14 @@ const vol=(sets)=>sets.reduce((a,s)=>{const w=s.type==='bodyweight'?(s.addedWeig
 
 function fmtSet(s,full=true){
   let str='';
+  if(s.type==='cardio'){
+    str=`${s.cardioMinutes||0}min`;
+    if(s.cardioSpeed) str+=` @ ${s.cardioSpeed}mph`;
+    if(s.cardioIncline) str+=`, ${s.cardioIncline}% grade`;
+    if(s.cardioDistance) str+=`, ${s.cardioDistance}mi`;
+    if(s.cardioWeightLbs) str+=` (${s.cardioWeightLbs}lbs vest)`;
+    return str;
+  }
   if(s.type==='hold') str=`${s.holdSeconds||0}s hold`;
   else if(s.type==='bodyweight') str=`${s.addedWeight?`BW+${s.addedWeight}`:'BW'} x${s.reps||0}`;
   else str=`${s.weight||0}lbs x${s.reps||0}`;
@@ -552,6 +595,7 @@ const App={
   allSets:[],       // all sets this session
   exNames:[],       // known exercise names
   restStart:null,
+  restFrozen:null,  // locked rest seconds after STOP is tapped
   restIv:null,
   sessIv:null,
   _acItems:[],      // autocomplete buffer
@@ -699,16 +743,26 @@ const App={
     const rests=lastSets.filter(s=>s.restSeconds>0).map(s=>s.restSeconds);
     const avgR=rests.length?Math.round(rests.reduce((a,b)=>a+b,0)/rests.length):null;
 
-    // PR
-    let prRM=0,prSet=null;
-    allSets.forEach(s=>{
-      const rm=s.type==='hold'?(s.holdSeconds||0):e1rm(s.weight||s.addedWeight||0,s.reps||1);
-      if(rm>prRM){prRM=rm;prSet=s}
-    });
+    // PR — cardio uses best distance or duration; lifting uses est 1RM
+    let prText='';
+    const isCardio=allSets[0]&&allSets[0].type==='cardio';
+    if(isCardio){
+      const bestDist=Math.max(...allSets.map(s=>s.cardioDistance||0));
+      const bestDur=Math.max(...allSets.map(s=>s.cardioMinutes||0));
+      const bestSpd=Math.max(...allSets.map(s=>s.cardioSpeed||0));
+      prText=bestDist>0?`🏆 Best: ${bestDist}mi · ${bestDur}min · ${bestSpd}mph`:`🏆 Best: ${bestDur}min @ ${bestSpd}mph`;
+    } else {
+      let prRM=0,prSet=null;
+      allSets.forEach(s=>{
+        const rm=s.type==='hold'?(s.holdSeconds||0):e1rm(s.weight||s.addedWeight||0,s.reps||1);
+        if(rm>prRM){prRM=rm;prSet=s}
+      });
+      if(prSet) prText=`🏆 PR: ${fmtSet(prSet,false)} → est. 1RM ${prRM}lbs`;
+    }
 
     document.getElementById('prev-hdr-lbl').textContent=`Last (${fd(sess.date)})`;
     document.getElementById('prev-sets').textContent=setsStr+(avgR?`\navg rest ${ft(avgR)}`:'');
-    document.getElementById('prev-pr').textContent=prSet?`🏆 PR: ${fmtSet(prSet,false)} → est. 1RM ${prRM}lbs`:'';
+    document.getElementById('prev-pr').textContent=prText;
     document.getElementById('prev-card').classList.add('on');
   },
 
@@ -729,17 +783,36 @@ const App={
     const gw=document.getElementById('grp-weight');
     const ga=document.getElementById('grp-added');
     const rl=document.getElementById('reps-lbl');
-    if(type==='weight'){gw.style.display='';ga.style.display='none';rl.textContent='Reps'}
-    else if(type==='bodyweight'){gw.style.display='none';ga.style.display='';rl.textContent='Reps'}
-    else{gw.style.display='none';ga.style.display='none';rl.textContent='Secs'}
-    document.getElementById('nums-row').style.gridTemplateColumns=
-      type==='weight'?'1fr 1fr 1fr':type==='bodyweight'?'1fr 1fr 1fr':'1fr 1fr';
+    const numsRow=document.getElementById('nums-row');
+    const rirChips=document.getElementById('rir-chips');
+    const cardioFields=document.getElementById('cardio-fields');
+    if(type==='cardio'){
+      numsRow.style.display='none';
+      rirChips.style.display='none';
+      cardioFields.style.display='block';
+    } else {
+      numsRow.style.display='';
+      rirChips.style.display='';
+      cardioFields.style.display='none';
+      if(type==='weight'){gw.style.display='';ga.style.display='none';rl.textContent='Reps'}
+      else if(type==='bodyweight'){gw.style.display='none';ga.style.display='';rl.textContent='Reps'}
+      else{gw.style.display='none';ga.style.display='none';rl.textContent='Secs'}
+      numsRow.style.gridTemplateColumns=
+        type==='weight'?'1fr 1fr 1fr':type==='bodyweight'?'1fr 1fr 1fr':'1fr 1fr';
+    }
   },
 
   fillFrom(s){
-    // type
     const typBtn=document.querySelector(`.type-btn[data-t="${s.type||'weight'}"]`);
     if(typBtn) this.setType(s.type||'weight',typBtn);
+    if(s.type==='cardio'){
+      if(s.cardioMinutes) document.getElementById('inp-cdur').value=s.cardioMinutes;
+      if(s.cardioSpeed) document.getElementById('inp-cspd').value=s.cardioSpeed;
+      if(s.cardioIncline!=null) document.getElementById('inp-cgrade').value=s.cardioIncline;
+      if(s.cardioDistance) document.getElementById('inp-cdist').value=s.cardioDistance;
+      if(s.cardioWeightLbs) document.getElementById('inp-cvest').value=s.cardioWeightLbs;
+      return;
+    }
     if(s.weight) document.getElementById('inp-w').value=s.weight;
     if(s.addedWeight) document.getElementById('inp-aw').value=s.addedWeight;
     if(s.holdSeconds) document.getElementById('inp-r').value=s.holdSeconds;
@@ -755,18 +828,27 @@ const App={
   async logSet(){
     if(!this.sess||!this.exercise){toast('No active session');return}
     const type=this.type;
-    const weight=type==='weight'?(parseFloat(document.getElementById('inp-w').value)||null):null;
-    const addedWeight=type==='bodyweight'?(parseFloat(document.getElementById('inp-aw').value)||null):null;
-    const repsVal=parseInt(document.getElementById('inp-r').value)||null;
-    const reps=type!=='hold'?repsVal:null;
-    const holdSeconds=type==='hold'?repsVal:null;
-    const rirRaw=document.getElementById('inp-rir').value;
-    const rir=rirRaw!==''?parseInt(rirRaw):null;
     const notes=document.getElementById('inp-note').value.trim();
-    const restSeconds=this.restStart?Math.floor((Date.now()-this.restStart)/1000):null;
+    // Use frozen rest if user hit STOP, otherwise use elapsed time
+    const restSeconds=this.restFrozen!=null?this.restFrozen:(this.restStart?Math.floor((Date.now()-this.restStart)/1000):null);
     const setNumber=this.curSets.length+1;
+    let set={sessionId:this.sess.id,exerciseName:this.exercise,setNumber,type,notes,restSeconds,timestamp:new Date().toISOString()};
 
-    const set={sessionId:this.sess.id,exerciseName:this.exercise,setNumber,type,weight,addedWeight,reps,holdSeconds,rir,rpe:null,restSeconds,notes,isBodyweight:type==='bodyweight',timestamp:new Date().toISOString()};
+    if(type==='cardio'){
+      set.cardioMinutes=parseFloat(document.getElementById('inp-cdur').value)||null;
+      set.cardioSpeed=parseFloat(document.getElementById('inp-cspd').value)||null;
+      set.cardioIncline=parseFloat(document.getElementById('inp-cgrade').value)||0;
+      set.cardioDistance=parseFloat(document.getElementById('inp-cdist').value)||null;
+      set.cardioWeightLbs=parseFloat(document.getElementById('inp-cvest').value)||0;
+      if(!set.cardioMinutes){toast('Enter duration (minutes)');return}
+    } else {
+      const weight=type==='weight'?(parseFloat(document.getElementById('inp-w').value)||null):null;
+      const addedWeight=type==='bodyweight'?(parseFloat(document.getElementById('inp-aw').value)||null):null;
+      const repsVal=parseInt(document.getElementById('inp-r').value)||null;
+      const rirRaw=document.getElementById('inp-rir').value;
+      Object.assign(set,{weight,addedWeight,reps:type!=='hold'?repsVal:null,holdSeconds:type==='hold'?repsVal:null,rir:rirRaw!==''?parseInt(rirRaw):null,rpe:null,isBodyweight:type==='bodyweight'});
+    }
+
     const id=await dbAdd('sets',set);
     set.id=id;
     this.curSets.push(set);
@@ -787,17 +869,44 @@ const App={
   },
 
   startRest(){
+    this.restFrozen=null;
     this.restStart=Date.now();
     clearInterval(this.restIv);
     document.getElementById('rest-bar').classList.add('on');
+    document.getElementById('rest-lbl').textContent='REST';
+    document.getElementById('rest-lbl').style.color='';
+    document.getElementById('rest-display').style.color='';
+    document.getElementById('rest-stop-btn').textContent='⏹ STOP';
+    document.getElementById('rest-stop-btn').style.display='';
     this.restIv=setInterval(()=>{
-      document.getElementById('rest-display').textContent=ft(Math.floor((Date.now()-this.restStart)/1000));
+      if(this.restFrozen==null)
+        document.getElementById('rest-display').textContent=ft(Math.floor((Date.now()-this.restStart)/1000));
     },1000);
   },
 
+  stopRest(){
+    this.restFrozen=Math.floor((Date.now()-this.restStart)/1000);
+    clearInterval(this.restIv);
+    document.getElementById('rest-lbl').textContent='LOCKED ✓';
+    document.getElementById('rest-lbl').style.color='var(--success)';
+    document.getElementById('rest-display').style.color='var(--success)';
+    document.getElementById('rest-stop-btn').style.display='none';
+  },
+
   resetRest(){
+    this.restFrozen=null;
     this.restStart=Date.now();
+    clearInterval(this.restIv);
+    document.getElementById('rest-lbl').textContent='REST';
+    document.getElementById('rest-lbl').style.color='';
+    document.getElementById('rest-display').style.color='';
     document.getElementById('rest-display').textContent='0:00';
+    document.getElementById('rest-stop-btn').textContent='⏹ STOP';
+    document.getElementById('rest-stop-btn').style.display='';
+    this.restIv=setInterval(()=>{
+      if(this.restFrozen==null)
+        document.getElementById('rest-display').textContent=ft(Math.floor((Date.now()-this.restStart)/1000));
+    },1000);
     toast('Rest timer reset');
   },
 
@@ -835,7 +944,11 @@ const App={
 
   updateSessStats(){
     const v=vol(this.allSets),n=this.allSets.length;
-    document.getElementById('sess-stats').textContent=`${n} set${n!==1?'s':''} · ${v>0?v.toLocaleString()+' lbs total':''}`;
+    const cardioMin=this.allSets.filter(s=>s.type==='cardio').reduce((a,s)=>a+(s.cardioMinutes||0),0);
+    let stats=`${n} set${n!==1?'s':''}`;
+    if(v>0) stats+=` · ${v.toLocaleString()} lbs`;
+    if(cardioMin>0) stats+=` · ${cardioMin}min cardio`;
+    document.getElementById('sess-stats').textContent=stats;
   },
 
   async showPreWorkout(){
@@ -871,7 +984,11 @@ const App={
       const sorted=exSets.sort((a,b)=>a.setNumber-b.setNumber);
       const top=sorted.reduce((b,s)=>e1rm(s.weight||0,s.reps||1)>e1rm(b.weight||0,b.reps||1)?s:b,sorted[0]);
       let tgt='';
-      if(top.type==='weight'){
+      if(top.type==='cardio'){
+        const newDur=(top.cardioMinutes||0)+5;
+        const newSpd=top.cardioSpeed?Math.round((top.cardioSpeed+0.1)*10)/10:null;
+        tgt=`Target: ${newDur}min${newSpd?` @ ${newSpd}mph`:''}${top.cardioIncline?`, ${top.cardioIncline}% grade`:''}`;
+      } else if(top.type==='weight'){
         const loRIR=top.rir!=null&&top.rir<=1;
         const tw=loRIR?(top.weight||0)+5:(top.weight||0);
         const tr=loRIR?(top.reps||0):(top.reps||0)+1;
@@ -924,8 +1041,16 @@ const Hist={
   _renderExList(names,byEx,el){
     el.innerHTML=names.map((n,i)=>{
       const s=byEx[n];const ls=s[s.length-1];
-      const pr=Math.max(...s.map(x=>e1rm(x.weight||0,x.reps||1)));
-      return`<div class="hist-item" onclick="Hist.showEx(${i})"><div class="hi-title">${n}<span class="badge">${s.length} sets</span></div><div class="hi-sub">Last: ${fmtSet(ls,false)} · PR est. ${pr}lbs</div></div>`;
+      const isCardio=ls.type==='cardio';
+      let prStr;
+      if(isCardio){
+        const bd=Math.max(...s.map(x=>x.cardioDistance||0));
+        const bm=Math.max(...s.map(x=>x.cardioMinutes||0));
+        prStr=bd>0?`Best ${bd}mi / ${bm}min`:`Best ${bm}min`;
+      } else {
+        prStr=`PR est. ${Math.max(...s.map(x=>e1rm(x.weight||0,x.reps||1)))}lbs`;
+      }
+      return`<div class="hist-item" onclick="Hist.showEx(${i})"><div class="hi-title">${n}<span class="badge">${s.length} sets</span></div><div class="hi-sub">Last: ${fmtSet(ls,false)} · ${prStr}</div></div>`;
     }).join('');
     this._listNames=names;
   },
@@ -960,12 +1085,23 @@ const Hist={
       .map(id=>({id,date:sessMap[id].date,sets:sets.filter(s=>s.sessionId===id)}))
       .sort((a,b)=>new Date(a.date)-new Date(b.date));
 
-    const allRM=sets.map(s=>e1rm(s.weight||0,s.reps||1));
-    const prRM=Math.max(...allRM);
-    const prSet=sets[allRM.indexOf(prRM)];
-    document.getElementById('ex-det-pr').textContent=prSet?`PR: ${fmtSet(prSet,false)} (est. ${prRM}lbs)`:'';
+    const isCardio=sets[0]&&sets[0].type==='cardio';
+    let prLabel='';
+    if(isCardio){
+      const bestDist=Math.max(...sets.map(s=>s.cardioDistance||0));
+      const bestDur=Math.max(...sets.map(s=>s.cardioMinutes||0));
+      prLabel=bestDist>0?`Best: ${bestDist}mi distance`:`Best: ${bestDur}min duration`;
+    } else {
+      const allRM=sets.map(s=>e1rm(s.weight||0,s.reps||1));
+      const prRM=Math.max(...allRM);
+      const prSet=sets[allRM.indexOf(prRM)];
+      if(prSet) prLabel=`PR: ${fmtSet(prSet,false)} (est. ${prRM}lbs)`;
+    }
+    document.getElementById('ex-det-pr').textContent=prLabel;
+    document.querySelector('#ex-detail [style*="Est. 1RM"]').firstChild.textContent=
+      isCardio?'Duration (min) over time':'Est. 1RM over time';
 
-    this.drawChart(sessions);
+    this.drawChart(sessions,isCardio);
 
     const histEl=document.getElementById('ex-hist-list');
     histEl.innerHTML=[...sessions].reverse().map(sess=>{
@@ -980,10 +1116,12 @@ const Hist={
     }).join('');
   },
 
-  drawChart(sessions){
+  drawChart(sessions,isCardio=false){
     const svg=document.getElementById('ex-chart');
     if(sessions.length<2){svg.innerHTML='<text x="160" y="70" text-anchor="middle" fill="#555" font-size="12">Need 2+ sessions to chart</text>';return}
-    const pts=sessions.map(sess=>Math.max(...sess.sets.map(s=>e1rm(s.weight||0,s.reps||1))));
+    const pts=isCardio
+      ?sessions.map(sess=>sess.sets.reduce((a,s)=>a+(s.cardioMinutes||0),0))
+      :sessions.map(sess=>Math.max(...sess.sets.map(s=>e1rm(s.weight||0,s.reps||1))));
     const mn=Math.min(...pts)*.92,mx=Math.max(...pts)*1.05;
     const W=320,H=130,P=14;
     const px=i=>P+(i/(pts.length-1))*(W-P*2);
@@ -1097,20 +1235,28 @@ const Exp={
       lines.push(`=== IRONLOG EXPORT: ${sess.name} — ${fdl(sess.date)} ===`);
       if(sess.bodyweight) lines.push(`Bodyweight: ${sess.bodyweight} lbs`);
       if(dur) lines.push(`Session duration: ${dur} min`);
-      lines.push(`Total volume: ${v.toLocaleString()} lbs`);
+      if(v>0) lines.push(`Total volume: ${v.toLocaleString()} lbs`);
+      const cardioMin=sets.filter(s=>s.type==='cardio').reduce((a,s)=>a+(s.cardioMinutes||0),0);
+      if(cardioMin>0) lines.push(`Total cardio: ${cardioMin} min`);
       lines.push('');
 
       for(const[ex,exSets]of Object.entries(byEx)){
         lines.push(`${ex}:`);
         exSets.sort((a,b)=>a.setNumber-b.setNumber).forEach((s,i)=>{
           let ln=`  Set${i+1}: `;
-          if(s.type==='hold') ln+=`${s.holdSeconds||0}s hold`;
-          else if(s.type==='bodyweight') ln+=`${s.addedWeight?`BW+${s.addedWeight}lbs`:'BW'} x${s.reps||0}`;
-          else ln+=`${s.weight||0}lbs x${s.reps||0}`;
-          if(s.rir!=null&&s.rir!=='') ln+=` @${s.rir}RIR`;
-          if(s.restSeconds) ln+=`, rest ${ft(s.restSeconds)}`;
+          if(s.type==='cardio'){
+            ln+=fmtSet(s,false);
+          } else if(s.type==='hold'){
+            ln+=`${s.holdSeconds||0}s hold`;
+          } else if(s.type==='bodyweight'){
+            ln+=`${s.addedWeight?`BW+${s.addedWeight}lbs`:'BW'} x${s.reps||0}`;
+          } else {
+            ln+=`${s.weight||0}lbs x${s.reps||0}`;
+          }
+          if(s.type!=='cardio'&&s.rir!=null&&s.rir!=='') ln+=` @${s.rir}RIR`;
+          if(s.type!=='cardio'&&s.restSeconds) ln+=`, rest ${ft(s.restSeconds)}`;
           const rm=e1rm(s.weight||s.addedWeight||0,s.reps||1);
-          if(rm>0&&s.type!=='hold') ln+=` (est. 1RM: ${rm}lbs)`;
+          if(rm>0&&s.type!=='hold'&&s.type!=='cardio') ln+=` (est. 1RM: ${rm}lbs)`;
           if(s.notes) ln+=` — "${s.notes}"`;
           lines.push(ln);
         });
@@ -1138,11 +1284,17 @@ const Exp={
   },
 
   async buildCSV(sessions){
-    const rows=['Date,Session,Exercise,Set#,Type,Weight,Reps,HoldSecs,AddedWeight,RIR,RestSecs,Est1RM,Notes'];
+    const rows=['Date,Session,Exercise,Set#,Type,Weight,Reps,HoldSecs,AddedWeight,RIR,RestSecs,Est1RM,CardioMin,CardioSpeedMph,CardioIncline,CardioMiles,CardioVestLbs,Notes'];
     for(const sess of sessions){
       const sets=await dbAll('sets','sessionId',sess.id);
       sets.forEach(s=>{
-        rows.push([sess.date.split('T')[0],`"${sess.name}"`,`"${s.exerciseName}"`,s.setNumber,s.type,s.weight||'',s.reps||'',s.holdSeconds||'',s.addedWeight||'',s.rir!=null?s.rir:'',s.restSeconds||'',e1rm(s.weight||0,s.reps||1)||'',`"${(s.notes||'').replace(/"/g,'""')}"`].join(','));
+        rows.push([
+          sess.date.split('T')[0],`"${sess.name}"`,`"${s.exerciseName}"`,s.setNumber,s.type,
+          s.weight||'',s.reps||'',s.holdSeconds||'',s.addedWeight||'',s.rir!=null?s.rir:'',s.restSeconds||'',
+          e1rm(s.weight||0,s.reps||1)||'',
+          s.cardioMinutes||'',s.cardioSpeed||'',s.cardioIncline!=null?s.cardioIncline:'',s.cardioDistance||'',s.cardioWeightLbs||'',
+          `"${(s.notes||'').replace(/"/g,'""')}"`
+        ].join(','));
       });
     }
     return rows.join('\n');
