@@ -1171,7 +1171,23 @@ const Hist={
       });
       html+=`</div>`;
     }
+    html+=`<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">
+      <button class="btn btn-danger" onclick="Hist.deleteSession(${sessId})">🗑 Delete This Workout</button>
+    </div>`;
     openModal(`${sess.name} — ${fd(sess.date)}`,html);
+  },
+
+  async deleteSession(sessId){
+    if(!confirm('Delete this workout and all its sets? Cannot be undone.'))return;
+    // Delete all sets for this session
+    const sets=await dbAll('sets','sessionId',sessId);
+    for(const s of sets) await dbDel('sets',s.id);
+    await dbDel('sessions',sessId);
+    closeModal();
+    await this.loadWkList();
+    // Also refresh exercise names in App
+    App.exNames=await App.loadExNames();
+    toast('Workout deleted');
   }
 };
 
