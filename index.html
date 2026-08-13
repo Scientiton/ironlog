@@ -988,10 +988,9 @@ const App={
   },
 
   updateSessStats(){
-    const v=vol(this.allSets),n=this.allSets.length;
+    const n=this.allSets.length;
     const cardioMin=this.allSets.filter(s=>s.type==='cardio').reduce((a,s)=>a+(s.cardioMinutes||0),0);
     let stats=`${n} set${n!==1?'s':''}`;
-    if(v>0) stats+=` · ${v.toLocaleString()} lbs`;
     if(cardioMin>0) stats+=` · ${cardioMin}min cardio`;
     document.getElementById('sess-stats').textContent=stats;
   },
@@ -1145,10 +1144,9 @@ const Hist={
     histEl.innerHTML=[...sessions].reverse().map(sess=>{
       const top=sess.sets.reduce((b,s)=>scoreFn(s)>scoreFn(b)?s:b,sess.sets[0]);
       const isPR=top&&bestSet&&scoreFn(top)===bestScore;
-      const v=vol(sess.sets);
       return`<div class="hist-item">
         <div class="hi-title">${fd(sess.date)}${isPR?'<span class="pr-badge">PR</span>':''}</div>
-        <div class="hi-sub">${sess.sets.length} sets · Top: ${fmtSet(top,true)}${isCardio?'':' · Vol: '+v.toLocaleString()+'lbs'}</div>
+        <div class="hi-sub">${sess.sets.length} sets · Top: ${fmtSet(top,true)}</div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${sess.sets.map(s=>fmtSet(s,true)).join(' | ')}</div>
       </div>`;
     }).join('');
@@ -1182,12 +1180,11 @@ const Hist={
     const rows=[];
     for(const sess of sorted.slice(0,40)){
       const sets=await dbAll('sets','sessionId',sess.id);
-      const v=vol(sets);
       const dur=sess.endTime?Math.floor((sess.endTime-sess.startTime)/60000):null;
       const exNames=[...new Set(sets.map(s=>s.exerciseName))];
       rows.push(`<div class="hist-item" onclick="Hist.showWkDetail(${sess.id})">
         <div class="hi-title">${sess.name} <span style="color:var(--text-muted);font-weight:400;font-size:13px">${fd(sess.date)}</span></div>
-        <div class="hi-sub">${sets.length} sets${dur?` · ${dur}min`:''} · ${v>0?v.toLocaleString()+'lbs':''}</div>
+        <div class="hi-sub">${sets.length} sets${dur?` · ${dur}min`:''}</div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${exNames.join(', ')}</div>
       </div>`);
     }
@@ -1199,8 +1196,7 @@ const Hist={
     const sets=await dbAll('sets','sessionId',sessId);
     const byEx={};sets.forEach(s=>{if(!byEx[s.exerciseName])byEx[s.exerciseName]=[];byEx[s.exerciseName].push(s)});
     const dur=sess.endTime?Math.floor((sess.endTime-sess.startTime)/60000):null;
-    const v=vol(sets);
-    let html=`<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">${fdl(sess.date)}${dur?` · ${dur} min`:''}${v>0?` · ${v.toLocaleString()} lbs total`:''}${sess.bodyweight?` · BW: ${sess.bodyweight}lbs`:''}</div>`;
+    let html=`<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">${fdl(sess.date)}${dur?` · ${dur} min`:''}${sess.bodyweight?` · BW: ${sess.bodyweight}lbs`:''}</div>`;
     for(const[ex,exSets]of Object.entries(byEx)){
       html+=`<div style="margin-bottom:14px"><div style="font-size:15px;font-weight:700;margin-bottom:6px">${ex}</div>`;
       exSets.sort((a,b)=>a.setNumber-b.setNumber).forEach(s=>{
