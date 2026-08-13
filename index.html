@@ -135,8 +135,9 @@ body{display:flex;flex-direction:column;height:100dvh}
 /* Sets list */
 #sets-list{display:none}
 #sets-list.on{display:block}
-.set-row{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);gap:8px}
+.set-row{display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);gap:8px;cursor:pointer}
 .set-row:last-child{border-bottom:none}
+.set-row:active{background:var(--surface2)}
 .set-num{width:24px;height:24px;background:var(--surface3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--text-muted);flex-shrink:0}
 .set-det{flex:1;font-size:15px;font-weight:600}
 .set-rest{font-size:12px;color:var(--text-muted);white-space:nowrap}
@@ -273,6 +274,10 @@ body{display:flex;flex-direction:column;height:100dvh}
       <div id="lf-title">Exercise</div>
       <button class="btn btn-ghost btn-sm" onclick="App.newExercise()">Change</button>
     </div>
+    <div id="edit-banner" style="display:none;align-items:center;justify-content:space-between;background:var(--accent-glow);border:1px solid var(--accent);border-radius:8px;padding:8px 12px;margin-bottom:10px">
+      <span style="font-size:13px;font-weight:700;color:var(--accent)">Editing Set <span id="edit-set-num"></span></span>
+      <span style="font-size:13px;font-weight:700;color:var(--text-muted)" onclick="App.cancelEdit()">Cancel</span>
+    </div>
     <div class="type-row">
       <button class="type-btn on" data-t="weight" onclick="App.setType('weight',this)">Weight</button>
       <button class="type-btn" data-t="bodyweight" onclick="App.setType('bodyweight',this)">BW</button>
@@ -334,7 +339,7 @@ body{display:flex;flex-direction:column;height:100dvh}
     </div>
     <textarea id="inp-note" class="inp" placeholder="Note (optional)..." style="font-size:14px;padding:10px 12px;resize:none;height:48px;margin-bottom:10px"></textarea>
     <div class="log-actions">
-      <button class="btn btn-primary" style="flex:2" onclick="App.logSet()">LOG SET</button>
+      <button class="btn btn-primary" style="flex:2" id="log-btn" onclick="App.logSet()">LOG SET</button>
       <button class="btn btn-secondary" style="flex:1" onclick="App.copyLast()">COPY LAST</button>
     </div>
   </div>
@@ -363,7 +368,7 @@ body{display:flex;flex-direction:column;height:100dvh}
       <div id="ex-det-name" style="padding:0 12px 6px;font-size:20px;font-weight:900"></div>
       <div class="chart-wrap"><svg id="ex-chart" width="100%" height="140" viewBox="0 0 320 140" preserveAspectRatio="none"></svg></div>
       <div style="padding:2px 12px 8px;display:flex;gap:16px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">
-        <span>Est. 1RM over time</span><span id="ex-det-pr" style="color:var(--success)"></span>
+        <span id="ex-chart-lbl">Est. 1RM over time</span><span id="ex-det-pr" style="color:var(--success)"></span>
       </div>
       <div id="ex-hist-list"></div>
     </div>
@@ -543,6 +548,8 @@ const fd=(iso)=>{const d=new Date(iso);return d.toLocaleDateString('en-US',{mont
 const fdl=(iso)=>{const d=new Date(iso);return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})};
 const e1rm=(w,r)=>{if(!w||!r)return 0;if(r===1)return w;return Math.round(w*(1+r/30))};
 const vol=(sets)=>sets.reduce((a,s)=>{const w=s.type==='bodyweight'?(s.addedWeight||0):(s.weight||0);return a+w*(s.reps||0)},0);
+// cardio "effort" score: distance (or duration as fallback) boosted by loaded vest weight, so a heavier ruck outranks an easier unweighted walk
+const cardioEffort=(s)=>{const dist=s.cardioDistance||0;const dur=s.cardioMinutes||0;const base=dist>0?dist:dur/60;return base*(1+(s.cardioWeightLbs||0)*0.02)};
 
 function fmtSet(s,full=true){
   let str='';
@@ -599,6 +606,7 @@ const App={
   restIv:null,
   sessIv:null,
   _acItems:[],      // autocomplete buffer
+  editingId:null,   // set id currently being edited, or null
 
   async init(){
     await openDB();
@@ -677,6 +685,7 @@ const App={
     s.endTime=Date.now();await dbPut('sessions',s);
     this.sess=null;this.exercise=null;this.curSets=[];this.allSets=[];
     this.restStart=null;
+    this.cancelEdit();
 
     document.getElementById('start-area').style.display='block';
     document.getElementById('sess-hdr').classList.remove('on');
@@ -711,6 +720,7 @@ const App={
     document.getElementById('ac-list').style.display='none';
     document.getElementById('ex-inp').value=name;
     this.exercise=name;
+    this.cancelEdit();
     if(!this.exNames.includes(name)) this.exNames.push(name);
 
     await this.loadPrevPerf(name);
@@ -743,14 +753,12 @@ const App={
     const rests=lastSets.filter(s=>s.restSeconds>0).map(s=>s.restSeconds);
     const avgR=rests.length?Math.round(rests.reduce((a,b)=>a+b,0)/rests.length):null;
 
-    // PR — cardio uses best distance or duration; lifting uses est 1RM
+    // PR — cardio uses best effort (distance/duration boosted by vest weight); lifting uses est 1RM
     let prText='';
     const isCardio=allSets[0]&&allSets[0].type==='cardio';
     if(isCardio){
-      const bestDist=Math.max(...allSets.map(s=>s.cardioDistance||0));
-      const bestDur=Math.max(...allSets.map(s=>s.cardioMinutes||0));
-      const bestSpd=Math.max(...allSets.map(s=>s.cardioSpeed||0));
-      prText=bestDist>0?`🏆 Best: ${bestDist}mi · ${bestDur}min · ${bestSpd}mph`:`🏆 Best: ${bestDur}min @ ${bestSpd}mph`;
+      const prSet=allSets.reduce((best,s)=>cardioEffort(s)>cardioEffort(best)?s:best);
+      prText=`🏆 Best: ${fmtSet(prSet,false)}`;
     } else {
       let prRM=0,prSet=null;
       allSets.forEach(s=>{
@@ -768,6 +776,7 @@ const App={
 
   newExercise(){
     this.exercise=null;
+    this.cancelEdit();
     document.getElementById('log-form').classList.remove('on');
     document.getElementById('prev-card').classList.remove('on');
     document.getElementById('sets-list').classList.remove('on');
@@ -829,10 +838,15 @@ const App={
     if(!this.sess||!this.exercise){toast('No active session');return}
     const type=this.type;
     const notes=document.getElementById('inp-note').value.trim();
-    // Use frozen rest if user hit STOP, otherwise use elapsed time
-    const restSeconds=this.restFrozen!=null?this.restFrozen:(this.restStart?Math.floor((Date.now()-this.restStart)/1000):null);
-    const setNumber=this.curSets.length+1;
-    let set={sessionId:this.sess.id,exerciseName:this.exercise,setNumber,type,notes,restSeconds,timestamp:new Date().toISOString()};
+    const editing=this.editingId!=null;
+    const editIdx=editing?this.curSets.findIndex(s=>s.id===this.editingId):-1;
+    if(editing&&editIdx===-1){this.cancelEdit();return}
+
+    let set=editing
+      ?{...this.curSets[editIdx],type,notes}
+      :{sessionId:this.sess.id,exerciseName:this.exercise,setNumber:this.curSets.length+1,type,notes,timestamp:new Date().toISOString(),
+        // Use frozen rest if user hit STOP, otherwise use elapsed time
+        restSeconds:this.restFrozen!=null?this.restFrozen:(this.restStart?Math.floor((Date.now()-this.restStart)/1000):null)};
 
     if(type==='cardio'){
       set.cardioMinutes=parseFloat(document.getElementById('inp-cdur').value)||null;
@@ -849,17 +863,47 @@ const App={
       Object.assign(set,{weight,addedWeight,reps:type!=='hold'?repsVal:null,holdSeconds:type==='hold'?repsVal:null,rir:rirRaw!==''?parseInt(rirRaw):null,rpe:null,isBodyweight:type==='bodyweight'});
     }
 
-    const id=await dbAdd('sets',set);
-    set.id=id;
-    this.curSets.push(set);
-    this.allSets.push(set);
     document.getElementById('inp-note').value='';
-    this.startRest();
-    this.renderSets();
-    document.getElementById('sets-list').classList.add('on');
-    this.updateSessStats();
-    toast(`Set ${setNumber} logged ✓`);
+
+    if(editing){
+      await dbPut('sets',set);
+      this.curSets[editIdx]=set;
+      const allIdx=this.allSets.findIndex(s=>s.id===set.id);
+      if(allIdx!==-1) this.allSets[allIdx]=set;
+      this.cancelEdit();
+      this.renderSets();
+      this.updateSessStats();
+      toast(`Set ${set.setNumber} updated ✓`);
+    } else {
+      const id=await dbAdd('sets',set);
+      set.id=id;
+      this.curSets.push(set);
+      this.allSets.push(set);
+      this.startRest();
+      this.renderSets();
+      document.getElementById('sets-list').classList.add('on');
+      this.updateSessStats();
+      toast(`Set ${set.setNumber} logged ✓`);
+    }
     if(navigator.vibrate) navigator.vibrate(30);
+  },
+
+  editSet(id){
+    const s=this.curSets.find(x=>x.id===id);
+    if(!s)return;
+    this.editingId=id;
+    this.fillFrom(s);
+    document.getElementById('inp-note').value=s.notes||'';
+    document.getElementById('edit-banner').style.display='flex';
+    document.getElementById('edit-set-num').textContent=s.setNumber;
+    document.getElementById('log-btn').textContent='UPDATE SET';
+    document.getElementById('log-form').scrollIntoView({behavior:'smooth',block:'start'});
+  },
+
+  cancelEdit(){
+    this.editingId=null;
+    document.getElementById('edit-banner').style.display='none';
+    document.getElementById('log-btn').textContent='LOG SET';
   },
 
   copyLast(){
@@ -912,17 +956,18 @@ const App={
 
   renderSets(){
     document.getElementById('sets-rows').innerHTML=this.curSets.map(s=>`
-      <div class="set-row">
+      <div class="set-row" onclick="App.editSet(${s.id})">
         <div class="set-num">${s.setNumber}</div>
         <div class="set-det">${fmtSet(s,true)}</div>
         <div class="set-rest">${s.restSeconds?ft(s.restSeconds):''}</div>
-        <button class="set-del" onclick="App.delSet(${s.id})">×</button>
+        <button class="set-del" onclick="event.stopPropagation();App.delSet(${s.id})">×</button>
       </div>
     `).join('');
   },
 
   async delSet(id){
     if(!confirm('Delete this set?'))return;
+    if(this.editingId===id) this.cancelEdit();
     await dbDel('sets',id);
     this.curSets=this.curSets.filter(s=>s.id!==id);
     this.allSets=this.allSets.filter(s=>s.id!==id);
@@ -1086,31 +1131,24 @@ const Hist={
       .sort((a,b)=>new Date(a.date)-new Date(b.date));
 
     const isCardio=sets[0]&&sets[0].type==='cardio';
-    let prLabel='';
-    if(isCardio){
-      const bestDist=Math.max(...sets.map(s=>s.cardioDistance||0));
-      const bestDur=Math.max(...sets.map(s=>s.cardioMinutes||0));
-      prLabel=bestDist>0?`Best: ${bestDist}mi distance`:`Best: ${bestDur}min duration`;
-    } else {
-      const allRM=sets.map(s=>e1rm(s.weight||0,s.reps||1));
-      const prRM=Math.max(...allRM);
-      const prSet=sets[allRM.indexOf(prRM)];
-      if(prSet) prLabel=`PR: ${fmtSet(prSet,false)} (est. ${prRM}lbs)`;
-    }
+    const scoreFn=isCardio?cardioEffort:(s=>e1rm(s.weight||0,s.reps||1));
+    let prLabel='',bestScore=-1,bestSet=null;
+    sets.forEach(s=>{const sc=scoreFn(s);if(sc>bestScore){bestScore=sc;bestSet=s}});
+    if(bestSet) prLabel=isCardio?`Best: ${fmtSet(bestSet,false)}`:`PR: ${fmtSet(bestSet,false)} (est. ${bestScore}lbs)`;
     document.getElementById('ex-det-pr').textContent=prLabel;
-    document.querySelector('#ex-detail [style*="Est. 1RM"]').firstChild.textContent=
+    document.getElementById('ex-chart-lbl').textContent=
       isCardio?'Duration (min) over time':'Est. 1RM over time';
 
     this.drawChart(sessions,isCardio);
 
     const histEl=document.getElementById('ex-hist-list');
     histEl.innerHTML=[...sessions].reverse().map(sess=>{
-      const top=sess.sets.reduce((b,s)=>e1rm(s.weight||0,s.reps||1)>e1rm(b.weight||0,b.reps||1)?s:b,sess.sets[0]);
-      const isPR=top&&e1rm(top.weight||0,top.reps||1)===prRM;
+      const top=sess.sets.reduce((b,s)=>scoreFn(s)>scoreFn(b)?s:b,sess.sets[0]);
+      const isPR=top&&bestSet&&scoreFn(top)===bestScore;
       const v=vol(sess.sets);
       return`<div class="hist-item">
         <div class="hi-title">${fd(sess.date)}${isPR?'<span class="pr-badge">PR</span>':''}</div>
-        <div class="hi-sub">${sess.sets.length} sets · Top: ${fmtSet(top,true)} · Vol: ${v.toLocaleString()}lbs</div>
+        <div class="hi-sub">${sess.sets.length} sets · Top: ${fmtSet(top,true)}${isCardio?'':' · Vol: '+v.toLocaleString()+'lbs'}</div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${sess.sets.map(s=>fmtSet(s,true)).join(' | ')}</div>
       </div>`;
     }).join('');
