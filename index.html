@@ -563,7 +563,6 @@ const ft=(s)=>{const m=Math.floor(s/60),sc=Math.floor(s%60);return`${m}:${sc.toS
 const fd=(iso)=>{const d=new Date(iso);return d.toLocaleDateString('en-US',{month:'short',day:'numeric'})};
 const fdl=(iso)=>{const d=new Date(iso);return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})};
 const e1rm=(w,r)=>{if(!w||!r)return 0;if(r===1)return w;return Math.round(w*(1+r/30))};
-const vol=(sets)=>sets.reduce((a,s)=>{const w=s.type==='bodyweight'?(s.addedWeight||0):(s.weight||0);return a+w*(s.reps||0)},0);
 // cardio "effort" score: distance (or duration as fallback) boosted by loaded vest weight, so a heavier ruck outranks an easier unweighted walk
 const cardioEffort=(s)=>{const dist=s.cardioDistance||0;const dur=s.cardioMinutes||0;const base=dist>0?dist:dur/60;return base*(1+(s.cardioWeightLbs||0)*0.02)};
 
@@ -1406,12 +1405,10 @@ const Exp={
       const sets=await dbAll('sets','sessionId',sess.id);
       const byEx={};sets.forEach(s=>{if(!byEx[s.exerciseName])byEx[s.exerciseName]=[];byEx[s.exerciseName].push(s)});
       const dur=sess.endTime?Math.floor((sess.endTime-sess.startTime)/60000):null;
-      const v=vol(sets);
 
       lines.push(`=== IRONLOG EXPORT: ${sess.name} — ${fdl(sess.date)} ===`);
       if(sess.bodyweight) lines.push(`Bodyweight: ${sess.bodyweight} lbs`);
       if(dur) lines.push(`Session duration: ${dur} min`);
-      if(v>0) lines.push(`Total volume: ${v.toLocaleString()} lbs`);
       const cardioMin=sets.filter(s=>s.type==='cardio').reduce((a,s)=>a+(s.cardioMinutes||0),0);
       if(cardioMin>0) lines.push(`Total cardio: ${cardioMin} min`);
       lines.push('');
@@ -1438,7 +1435,6 @@ const Exp={
         });
         const rests=exSets.filter(s=>s.restSeconds>0).map(s=>s.restSeconds);
         if(rests.length) lines.push(`  avg rest: ${ft(Math.round(rests.reduce((a,b)=>a+b,0)/rests.length))}`);
-        const ev=vol(exSets);if(ev>0) lines.push(`  volume: ${ev.toLocaleString()} lbs`);
         lines.push('');
       }
       lines.push('=== END EXPORT ===\n');
@@ -1447,7 +1443,7 @@ const Exp={
       lines.push('--- SESSION COMPARISON ---');
       for(const sess of sessions){
         const sets=await dbAll('sets','sessionId',sess.id);
-        lines.push(`${fd(sess.date)} ${sess.name}: ${sets.length} sets, ${vol(sets).toLocaleString()}lbs`);
+        lines.push(`${fd(sess.date)} ${sess.name}: ${sets.length} sets`);
       }
     }
     return lines.join('\n');
