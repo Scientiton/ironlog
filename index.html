@@ -1249,24 +1249,70 @@ const Hist={
     el.innerHTML=rows.join('');
   },
 
+  detailSelMode:false,
+  detailSelectedIds:new Set(),
+
   async showWkDetail(sessId){
+    this.curSessId=sessId;
+    if(!this.detailSelMode) this.detailSelectedIds=new Set();
     const sess=await dbGet('sessions',sessId);
     const sets=await dbAll('sets','sessionId',sessId);
     const byEx={};sets.forEach(s=>{if(!byEx[s.exerciseName])byEx[s.exerciseName]=[];byEx[s.exerciseName].push(s)});
     const dur=sess.endTime?Math.floor((sess.endTime-sess.startTime)/60000):null;
-    let html=`<div style="font-size:13px;color:var(--text-muted);margin-bottom:14px">${fdl(sess.date)}${dur?` · ${dur} min`:''}${sess.bodyweight?` · BW: ${sess.bodyweight}lbs`:''}</div>`;
+    let html=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">
+      <div style="font-size:13px;color:var(--text-muted)">${fdl(sess.date)}${dur?` · ${dur} min`:''}${sess.bodyweight?` · BW: ${sess.bodyweight}lbs`:''}</div>
+      <button class="btn btn-ghost btn-sm" onclick="Hist.toggleDetailSelMode(${sessId})">${this.detailSelMode?'Cancel':'Select Sets'}</button>
+    </div>`;
     for(const[ex,exSets]of Object.entries(byEx)){
       html+=`<div style="margin-bottom:14px"><div style="font-size:15px;font-weight:700;margin-bottom:6px">${ex}</div>`;
       exSets.sort((a,b)=>a.setNumber-b.setNumber).forEach(s=>{
         const rm=e1rm(s.weight||0,s.reps||1);
-        html+=`<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;font-size:13px"><span style="color:var(--text-muted);width:20px">${s.setNumber}</span><span style="flex:1">${fmtSet(s,true)}</span>${rm>0&&s.type!=='hold'?`<span style="color:var(--text-muted);font-size:11px">1RM~${rm}</span>`:''}${s.notes?`<span style="color:var(--text-muted);font-style:italic;font-size:12px">"${s.notes}"</span>`:''}</div>`;
+        const row=`<span style="color:var(--text-muted);width:20px">${s.setNumber}</span><span style="flex:1">${fmtSet(s,true)}</span>${rm>0&&s.type!=='hold'?`<span style="color:var(--text-muted);font-size:11px">1RM~${rm}</span>`:''}${s.notes?`<span style="color:var(--text-muted);font-style:italic;font-size:12px">"${s.notes}"</span>`:''}`;
+        if(this.detailSelMode){
+          const checked=this.detailSelectedIds.has(s.id);
+          html+=`<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer" onclick="Hist.toggleSetSelect(${s.id})"><span class="wk-check ${checked?'on':''}" style="width:18px;height:18px;font-size:11px">✓</span>${row}</div>`;
+        } else {
+          html+=`<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;font-size:13px">${row}</div>`;
+        }
       });
       html+=`</div>`;
+    }
+    if(this.detailSelMode&&this.detailSelectedIds.size>0){
+      html+=`<div style="margin:14px 0"><button class="btn btn-primary" style="width:100%" onclick="Hist.moveSelectedSets()">Move ${this.detailSelectedIds.size} Set${this.detailSelectedIds.size===1?'':'s'} to Exercise…</button></div>`;
     }
     html+=`<div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">
       <button class="btn btn-danger" onclick="Hist.deleteSession(${sessId})">🗑 Delete This Workout</button>
     </div>`;
     openModal(`${sess.name} — ${fd(sess.date)}`,html);
+  },
+
+  toggleDetailSelMode(sessId){
+    this.detailSelMode=!this.detailSelMode;
+    if(!this.detailSelMode) this.detailSelectedIds=new Set();
+    this.showWkDetail(sessId);
+  },
+
+  toggleSetSelect(id){
+    if(this.detailSelectedIds.has(id)) this.detailSelectedIds.delete(id); else this.detailSelectedIds.add(id);
+    this.showWkDetail(this.curSessId);
+  },
+
+  async moveSelectedSets(){
+    const ids=[...this.detailSelectedIds];
+    if(!ids.length)return;
+    const nw=prompt(`Move ${ids.length} set${ids.length===1?'':'s'} to which exercise? (existing name merges into it, new name creates one)`);
+    if(!nw||!nw.trim())return;
+    for(const id of ids){
+      const s=await dbGet('sets',id);
+      s.exerciseName=nw.trim();
+      await dbPut('sets',s);
+    }
+    App.exNames=await App.loadExNames();
+    this.detailSelMode=false;
+    this.detailSelectedIds=new Set();
+    toast(`Moved to "${nw.trim()}"`);
+    await this.showWkDetail(this.curSessId);
+    await this.loadWkList();
   },
 
   async deleteSession(sessId){
